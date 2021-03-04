@@ -34,24 +34,25 @@
 			<artifactId>jts-core</artifactId>
 			<version>1.18.0</version>
 		</dependency>
-
 		<dependency>
-			<groupId>com.github.micycle1</groupId>
+			<groupId>com.github.gwlucastrig</groupId>
 			<artifactId>Tinfour</artifactId>
-			<version>04f0f8d751</version>
+			<version>-SNAPSHOT</version>
 		</dependency>
-
 		<dependency>
 			<groupId>org.processing</groupId>
 			<artifactId>core</artifactId>
 			<version>3.3.7</version>
-			<scope>provided</scope> <!-- don't package into fat jar -->
 		</dependency>
-
 		<dependency>
 			<groupId>org.tinspin</groupId>
 			<artifactId>tinspin-indexes</artifactId>
 			<version>1.7.1</version>
+		</dependency>
+		<dependency>
+			<groupId>org.orbisgis</groupId>
+			<artifactId>poly2tri-core</artifactId>
+			<version>0.1.2</version>
 		</dependency>
 
 	</dependencies>

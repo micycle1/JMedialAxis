@@ -8,16 +8,16 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import org.locationtech.jts.algorithm.locate.IndexedPointInAreaLocator;
 import org.locationtech.jts.densify.Densifier;
 import org.locationtech.jts.dissolve.LineDissolver;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.Location;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.PrecisionModel;
-import org.locationtech.jts.geom.prep.PreparedGeometry;
-import org.locationtech.jts.geom.prep.PreparedGeometryFactory;
 import org.locationtech.jts.operation.linemerge.LineMergeGraph;
 import org.locationtech.jts.simplify.DouglasPeuckerSimplifier;
 import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
@@ -33,7 +33,8 @@ import processing.core.PConstants;
 
 /**
  * Based on ideas from
- * https://www.cs.ubc.ca/labs/imager/th/2003/Tam2004/Tam2004.pdf
+ * https://www.cs.ubc.ca/labs/imager/th/2003/Tam2004/Tam2004.pdf and Voronoi
+ * Ball/Disk Models for Computational Shape Applications
  * 
  * <p>
  * Produces a directed acyclic graph of the MD / more specifically rooted tree
@@ -53,16 +54,20 @@ import processing.core.PConstants;
  * Decompose the disk coordinates into curves.
  * <p>
  * If angle of successive line segments is the same, merge them
+ * <p>
+ * * One way to get a smoother initial axis (i.e. without pruning) is to apply
+ * on a smoothed version of the shape.
  * 
  * @author Michael Carleton
  *
  */
 public class MedialAxis {
 
-	private static final GeometryFactory GEOM_FACTORY = new GeometryFactory(new PrecisionModel(1));
+	private static final GeometryFactory GEOM_FACTORY = new GeometryFactory(
+			new PrecisionModel(PrecisionModel.FLOATING_SINGLE));
 
 	private Geometry g;
-	private final PreparedGeometry cache;
+//	private final PreparedGeometry cache;
 	private KDTree<VD> kdTree;
 //	private IncrementalTin tin;
 //	private TC tc;
@@ -73,10 +78,12 @@ public class MedialAxis {
 	VD deepestNode;
 	private List<VD> leaves;
 	private List<VD> bifurcations; // birfurcating/forking nodes
+	private List<Segment> segments;
 
 //	public ArrayList<ArrayList<VD>> segments = new ArrayList<>(); // node sections between forks
 
 	public MedialAxis(Coordinate[] coordinates) {
+		// TODO support holes
 		this(GEOM_FACTORY.createLinearRing(coordinates));
 	}
 
@@ -84,6 +91,13 @@ public class MedialAxis {
 //		this(GEOM_FACTORY.createLinearRing(coordinates));
 //	}
 
+	private final IndexedPointInAreaLocator pointLocator;
+
+	/**
+	 * The medial axis is computed for the geometry during construction.
+	 * 
+	 * @param g
+	 */
 	public MedialAxis(Geometry g) {
 //		if (!g.isSimple()) {
 //			throw new Exception("Invalid Geometry -- it is not simple (may self-intersect or have repeated points.");
@@ -93,7 +107,7 @@ public class MedialAxis {
 		/**
 		 * Simplify if complex
 		 */
-		System.out.println("before " + g.getCoordinates().length);
+//		System.out.println("before " + g.getCoordinates().length);
 		if (g.getCoordinates().length > 2000) {
 			Polygon poly = (Polygon) g;
 			if (poly.getNumInteriorRing() > 0) {
@@ -102,16 +116,15 @@ public class MedialAxis {
 				g = DouglasPeuckerSimplifier.simplify(g, 1);
 			}
 		}
-		System.out.println("w/simplify " + g.getCoordinates().length);
+//		System.out.println("w/simplify " + g.getCoordinates().length);
 
-
-		cache = PreparedGeometryFactory.prepare(g);
-		this.g = Densifier.densify(g, 10).reverse(); // NOTE constant=10
-		System.out.println("after " + this.g.getCoordinates().length);
+		pointLocator = new IndexedPointInAreaLocator(g);
+		this.g = Densifier.densify(g, 10); // NOTE constant=10
+//		System.out.println("after " + this.g.getCoordinates().length);
 
 		TC tc = prepareTin();
 
-		// build up directed tree of medial axis
+		// having done triangulation, build up directed tree of medial axis
 		rootNode = new VD(null, 0, tc.largestDiskTriangle, tc.largestCircumcircle, 0);
 		deepestNode = rootNode;
 		ArrayDeque<VD> stack = new ArrayDeque<>(15);
@@ -156,14 +169,21 @@ public class MedialAxis {
 			depth++;
 		}
 		deepestNode = voronoiDisks.get(voronoiDisks.size() - 1); // TODO check
+//		calculateFeatureArea();
+		calcFeatureArea();
+//		System.out.println("total area: " + totalArea);
+//		System.out.println(rootNode.featureArea);
+	}
+
+	public List<VD> getDisks() {
+		return voronoiDisks;
 	}
 
 	public VD nearestDisk(double x, double y) {
 		// TODO use cover tree?
 		if (kdTree == null) { // Lazy initialisation
 			kdTree = KDTree.create(2);
-			voronoiDisks
-					.forEach(disk -> kdTree.insert(new double[] { disk.position.x, disk.position.y }, disk));
+			voronoiDisks.forEach(disk -> kdTree.insert(new double[] { disk.position.x, disk.position.y }, disk));
 		}
 		return kdTree.nnQuery(new double[] { x, y }).value();
 	}
@@ -272,7 +292,7 @@ public class MedialAxis {
 
 	/**
 	 * Segments are sets of points between two forking disks or one forking disk and
-	 * a leaf.
+	 * a leaf. Segments include parent bifurcating node
 	 * 
 	 * @return
 	 */
@@ -302,10 +322,50 @@ public class MedialAxis {
 				segments.add(segment);
 			}
 		}
-
 		return segments;
 	}
 
+	public List<Segment> getSegmentsAsSegments() {
+
+		// TODO test/use
+
+		if (segments == null) { // Lazy initialisation
+			segments = new ArrayList<>();
+
+			/**
+			 * During construction we use stack.add() to naviagate nodes in a BFS manner.
+			 * Here we use push() to do so so in a DFS manner.
+			 */
+			Segment segment;
+			ArrayList<VD> forks = new ArrayList<>(getBifurcations());
+			forks.add(rootNode);
+
+			for (VD disk : forks) {
+
+				segment = new Segment(disk);
+				for (VD child : disk.children) {
+
+					segment.add(disk); // add bifurcating parent
+					VD node = child;
+
+					while (node.degree == 1) {
+						segment.add(node);
+						node = node.children.get(0);
+					}
+					segment.add(node);
+					segments.add(segment);
+				}
+			}
+		}
+
+		return this.segments;
+	}
+
+	/**
+	 * 90% of CPU time is here
+	 * 
+	 * @return
+	 */
 	private TC prepareTin() {
 		IncrementalTin tin = new IncrementalTin();
 
@@ -325,22 +385,79 @@ public class MedialAxis {
 
 	private void calculateDepthFirstIndices() {
 		/**
-		 * When tree is
+		 * calculate index of nodes visited When tree is walked in DFS manner.
 		 */
 	}
 
+	/**
+	 * @deprecated in favour of recursive method
+	 */
 	private void calculateFeatureArea() {
 
-		HashSet<VD> seen = new HashSet<>();
-
-		/*
-		 * Start at leaves, move towards ancestors. Increase area of ancestor if
+		/**
+		 * Starting at leaves, sum each segment, stopping when reach bifurcating node;
+		 * add bifurcation node to array and use that next time.
 		 */
-		double area;
-		getLeaves().forEach(l -> {
-			getAncestors(l);
-		});
 
+		List<VD> nodes = getLeaves();
+		HashSet<VD> nextLeaves = new HashSet<>(); // what to begin with next iteration
+		HashMap<VD, Integer> waitAtNodes = new HashMap<>();
+
+		getBifurcations().forEach(n -> waitAtNodes.put(n, 0));
+
+		while (!nodes.isEmpty()) {
+
+			for (VD node : nodes) {
+
+				VD current = node;
+
+				while (current.degree < 2) { // FIXME what happens when start with bifurcating node
+					current.parent.featureArea += current.featureArea;
+					current = current.parent;
+				}
+
+				// current is bifurcating node
+
+				final int childrenReached = waitAtNodes.merge(current, 1, Integer::sum);
+
+				// exit when reach parent bifurcating node
+
+				/**
+				 * Only propagate from a bifurcating node one all its child paths have reached
+				 * it.
+				 */
+				if (childrenReached == current.degree && current.parent != null) { // skip root node
+					/**
+					 * Don't add parent node until every child path to it has reached it (use
+					 * counter per bifurcating node?)
+					 */
+
+					// skip (current.degree < 2) being false
+					current.parent.featureArea += current.featureArea;
+					current = current.parent;
+					nextLeaves.add(current);
+				}
+
+			}
+			nodes = new ArrayList<VD>(nextLeaves);
+			nextLeaves.clear();
+		}
+	}
+
+	private void calcFeatureArea() {
+		if (rootNode.area == rootNode.featureArea) { // lazy compute
+			recurseFeatureArea(rootNode);
+		}
+	}
+
+	private static double recurseFeatureArea(VD node) {
+		if (node.degree == 0) {
+			return node.area;
+		}
+		for (VD child : node.children) {
+			node.featureArea += recurseFeatureArea(child);
+		}
+		return node.featureArea;
 	}
 
 	public void drawVDM(PApplet p) {
@@ -360,7 +477,7 @@ public class MedialAxis {
 			VD live = stack.pop();
 
 			live.children.forEach(child -> {
-				p.stroke(live.depthBF / depth, 1, 1, 0.8f);
+				p.stroke((live.depthBF / depth) * .8f, 1, 1, 0.8f);
 				p.line((float) live.position.x, (float) live.position.y, (float) child.position.x,
 						(float) child.position.y);
 				stack.push(child);
@@ -426,6 +543,48 @@ public class MedialAxis {
 	}
 
 	/**
+	 * Prune disks with feature area that is smaller in area than the given
+	 * significance threshold. The significance value of a feature can be determined
+	 * by summing the areas of all triangles in the subtree associated with that
+	 * feature. Any subtree that has a value below the threshold is pruned. Each
+	 * feature can be seen as being supported by the branches of the subtree, so
+	 * when the subtree is pruned, the feature is eliminated.
+	 * 
+	 * @param p
+	 * @param threshold 0...1 (where 0 includes everything and 1 root node only)
+	 */
+	public void drawVDMPrune(PApplet p, double threshold) {
+
+		// square threshold to make the effect more linear TODO different function?
+		final double areaLimit = rootNode.featureArea * threshold * threshold * threshold;
+
+		// iterate by DFS for easier break
+
+		ArrayDeque<VD> stack = new ArrayDeque<>();
+		stack.push(rootNode);
+		p.strokeWeight(5);
+		p.colorMode(PConstants.HSB, 1, 1, 1, 1);
+
+		// limit using depth or vds index to grow skeleton
+
+		final float depth = deepestNode.depthBF;
+
+		while (!stack.isEmpty()) {
+			VD live = stack.pop();
+
+			live.children.forEach(child -> {
+				if (child.featureArea > areaLimit) {
+					p.stroke(live.depthBF / depth, 1, 1, 0.8f);
+					p.line((float) live.position.x, (float) live.position.y, (float) child.position.x,
+							(float) child.position.y);
+					stack.push(child); // DFS
+				}
+			});
+		}
+		p.colorMode(PConstants.RGB, 255, 255, 255, 255);
+	}
+
+	/**
 	 * @return double[3] of [x, y, radius]
 	 */
 	private static double[] circumcircle(Vertex a, Vertex b, Vertex c) {
@@ -476,7 +635,9 @@ public class MedialAxis {
 			 * If geometry contains triangle circumcircle center then include it in medial
 			 * axis
 			 */
-			if (cache.covers(GEOM_FACTORY.createPoint(center))) {
+
+			if (pointLocator.locate(center) == Location.INTERIOR) {
+				// TODO use rasterised PShape?
 
 				coords.add(center);
 				coord.put(t, center);
@@ -497,28 +658,36 @@ public class MedialAxis {
 	}
 
 	/**
-	 * Voronoi Disk. medial disk? maximal disk?
+	 * Voronoi Disk. medial disk? maximal disk? Also inscribed disks.
 	 * 
 	 * <p>
 	 * A voronoi disk represents each node in the medial axis and has a
-	 * corresponding triangle in the Delaunay triangulation.
+	 * corresponding triangle in the underlying Delaunay triangulation.
 	 * 
 	 * @author MCarleton
 	 *
 	 */
 	public static class VD {
 
+		/** The underlying delaunay triangle associated with this disk */
 		public SimpleTriangle t;
-		public VD parent; // null if root node
+		/** This disk's parent node. Null if root node */
+		public VD parent;
+		/**
+		 * This disk's children nodes. Nodes have upto 3 children. Leaf nodes have 0
+		 * children.
+		 */
 		ArrayList<VD> children;
 		public final int depthBF; // breadth-first depth from the root node, better for drawing. // TODO
 		public int depthDF; // distance from the root, length of the path from n to the root TODO
 
 //		public double[] circumcircle;
-		public int degree = 0; // number of children / outdegree
-		double area; // area of underlying triangle only (compute once)
-		double featureArea; // area of triangles associated with axis graph subtree of this disk |
-							// "underlying area"?
+		/** The number of children / outdegree */
+		public int degree = 0;
+		/** The area of the underlying delaunay triangle associated with this disk */
+		double area;
+		/** The sum of triangle areas of this disk and all its descendants */
+		public double featureArea;
 
 		VD segmentParent;
 
@@ -529,12 +698,14 @@ public class MedialAxis {
 		boolean forkParent = false; // (is child a node of degree >1?)
 
 		/**
-		 * If positive, this part of the object widens as we progress along the axis
+		 * Measures the change in the width of the shape per unit length of the axis.If
+		 * positive, this part of the object widens as we progress along the axis
 		 * segment; if it’s negative the part narrows
 		 */
-		double axialGradient; // axial gradient between this and its parent.
+		final double axialGradient; // axial gradient between this and its parent. (rChild-rParent/d)
 
 		public final Coordinate position;
+		/** The radius of the circumcircle of the disk's underlying triangle */
 		public final double radius;
 
 		final int id; // BFS id from root node, unique (unlike depthDF)
@@ -550,6 +721,11 @@ public class MedialAxis {
 			featureArea = area;
 			position = new Coordinate(circumcircle[0], circumcircle[1]);
 			radius = circumcircle[2];
+			if (parent != null) {
+				axialGradient = (radius - parent.radius) / distance(position, parent.position);
+			} else {
+				axialGradient = 0;
+			}
 		}
 
 		/**
@@ -560,8 +736,7 @@ public class MedialAxis {
 			degree++;
 		}
 
-		boolean terminates() { // is leaf
-			// isendpoint
+		boolean isLeaf() {
 			return children.size() == 0;
 		}
 
@@ -573,7 +748,7 @@ public class MedialAxis {
 	}
 
 	/**
-	 * Return graphs based on merged edges
+	 * Edges model links between two disks. Return graphs based on merged edges
 	 * 
 	 * @author MCarleton
 	 *
@@ -591,15 +766,37 @@ public class MedialAxis {
 
 	/**
 	 * segment/trunk segment
+	 * 
+	 * comparable based on fork degree?
 	 *
 	 */
 	public static class Segment {
-		VD root;
-		VD leaf;
-		List<VD> disks;
+		VD root; // root disk
+		VD leaf; // leaft disk
+		/** In descending order from the segment root */
+		private List<VD> innerDisks;
 		LineString lineString;
 		Segment sibling; // segment that shares parent disk
 		// contains bezier interpolation
+		int forkDegree; // how many forks are visited from the rootnode to the root of this segment
+		double length; // sum of edge lengths (not count)
+
+		public Segment(VD root) {
+			this.root = root;
+			innerDisks = new ArrayList<>();
+//			length = root.length;
+		}
+
+		public void add(VD disk) {
+			innerDisks.add(disk);
+//			length++;
+		}
+	}
+
+	private static double distance(Coordinate a, Coordinate b) {
+		double deltaX = a.y - b.y;
+		double deltaY = a.x - b.x;
+		return Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 	}
 
 }
