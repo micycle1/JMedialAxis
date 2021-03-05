@@ -34,5 +34,6 @@ by Roger C. Tam.
 ..
 ## TODO
 * [ ] VDM simplification via clustering
-* [ ] Option to model braches/segments as bezier curves 
+* [ ] Option to model braches/segments as bezier curves
+* [ ] Feature reconstruction
 * [ ] Prevent cycles (in shapes with holes) from being pruned

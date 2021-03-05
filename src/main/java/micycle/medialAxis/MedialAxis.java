@@ -96,7 +96,8 @@ public class MedialAxis {
 	/**
 	 * The medial axis is computed for the geometry during construction.
 	 * 
-	 * @param g
+	 * @param g Geometry whose medial axis to compute. Can contain holes. Must not
+	 *          be a multigeometry
 	 */
 	public MedialAxis(Geometry g) {
 //		if (!g.isSimple()) {
@@ -139,7 +140,7 @@ public class MedialAxis {
 
 		while (!stack.isEmpty()) {
 
-			VD live = stack.pop(); // FIFO
+			VD live = stack.pop(); // FIFO (BFS)
 			voronoiDisks.add(live);
 
 			// get half-edge duals (shared with other triangles)
@@ -291,68 +292,27 @@ public class MedialAxis {
 	}
 
 	/**
-	 * Segments are sets of points between two forking disks or one forking disk and
-	 * a leaf. Segments include parent bifurcating node
+	 * Aka features, aka branches Segment is a linear portion of medial disks.
 	 * 
-	 * @return
+	 * @return List of {@link micycle.medialAxis.MedialAxis.Segment segments}
 	 */
-	public List<ArrayList<VD>> getSegments() {
-
-		/**
-		 * During construction we use stack.add() to naviagate nodes in a BFS manner.
-		 * Here we use push() to do so so in a DFS manner.
-		 */
-		ArrayList<ArrayList<VD>> segments = new ArrayList<>();
-		ArrayList<VD> segment;
-		ArrayList<VD> forks = new ArrayList<>(getBifurcations());
-		forks.add(rootNode);
-
-		for (VD disk : forks) {
-
-			for (VD child : disk.children) {
-				segment = new ArrayList<>();
-				segment.add(disk); // add bifurcating parent
-				VD node = child;
-
-				while (node.degree == 1) {
-					segment.add(node);
-					node = node.children.get(0);
-				}
-				segment.add(node);
-				segments.add(segment);
-			}
-		}
-		return segments;
-	}
-
-	public List<Segment> getSegmentsAsSegments() {
-
-		// TODO test/use
-
+	public List<Segment> getSegments() {
 		if (segments == null) { // Lazy initialisation
 			segments = new ArrayList<>();
 
-			/**
-			 * During construction we use stack.add() to naviagate nodes in a BFS manner.
-			 * Here we use push() to do so so in a DFS manner.
-			 */
 			Segment segment;
 			ArrayList<VD> forks = new ArrayList<>(getBifurcations());
 			forks.add(rootNode);
 
 			for (VD disk : forks) {
-
-				segment = new Segment(disk);
 				for (VD child : disk.children) {
-
-					segment.add(disk); // add bifurcating parent
+					segment = new Segment(disk); // init segment with bifurcating node
 					VD node = child;
-
 					while (node.degree == 1) {
 						segment.add(node);
-						node = node.children.get(0);
+						node = node.children.get(0); // get the only child node
 					}
-					segment.add(node);
+					segment.end(node); // end with axis leaf or next bifurcating node
 					segments.add(segment);
 				}
 			}
@@ -367,7 +327,8 @@ public class MedialAxis {
 	 * @return
 	 */
 	private TC prepareTin() {
-		IncrementalTin tin = new IncrementalTin();
+		IncrementalTin tin = new IncrementalTin(10);
+//		tin.getNeighborhoodPointsCollector().
 
 		// Triangulate geometry coordinates
 		Coordinate[] coords = g.getCoordinates();
@@ -551,7 +512,8 @@ public class MedialAxis {
 	 * when the subtree is pruned, the feature is eliminated.
 	 * 
 	 * @param p
-	 * @param threshold 0...1 (where 0 includes everything and 1 root node only)
+	 * @param threshold percentage of the total area of the object 0...1 (where 0
+	 *                  includes everything and 1 root node only)
 	 */
 	public void drawVDMPrune(PApplet p, double threshold) {
 
@@ -708,7 +670,7 @@ public class MedialAxis {
 		/** The radius of the circumcircle of the disk's underlying triangle */
 		public final double radius;
 
-		final int id; // BFS id from root node, unique (unlike depthDF)
+		final int id; // BFS id from root node, unique for each disk (unlike depthDF)
 
 		VD(VD parent, int id, SimpleTriangle t, double[] circumcircle, int depthBF) {
 			this.parent = parent;
@@ -743,7 +705,7 @@ public class MedialAxis {
 		@Override
 		public int hashCode() {
 			// or cantour pairing, or (int) double.tolongbits
-			return t.getEdgeA().hashCode();
+			return t.getEdgeA().hashCode(); // unique for a given tin
 		}
 	}
 
@@ -755,12 +717,16 @@ public class MedialAxis {
 	 */
 	public static class Edge {
 
-		VD head;
-		VD tail;
-		int depth = head.depthBF;
+		public final VD head;
+		public final VD tail;
+		int depth;
+		final double axialGradient;
 
-		public Edge() {
-			// TODO Auto-generated constructor stub
+		public Edge(VD head, VD tail) {
+			this.head = head;
+			this.tail = tail;
+			depth = head.depthBF;
+			axialGradient = tail.axialGradient;
 		}
 	}
 
@@ -771,25 +737,63 @@ public class MedialAxis {
 	 *
 	 */
 	public static class Segment {
-		VD root; // root disk
-		VD leaf; // leaft disk
-		/** In descending order from the segment root */
-		private List<VD> innerDisks;
-		LineString lineString;
+
+		public final VD root; // root disk
+		public VD leaf; // leaf disk
+		/**
+		 * Disks between root and leaf of this segment, in descending order from the
+		 * segment's root.
+		 */
+		public List<VD> innerDisks;
 		Segment sibling; // segment that shares parent disk
 		// contains bezier interpolation
 		int forkDegree; // how many forks are visited from the rootnode to the root of this segment
 		double length; // sum of edge lengths (not count)
+		public final List<Edge> edges;
+		public LineString lineString;
 
-		public Segment(VD root) {
+		/**
+		 * 
+		 * @param root a tri/bifurcating disk
+		 */
+		Segment(VD root) {
 			this.root = root;
 			innerDisks = new ArrayList<>();
-//			length = root.length;
+			edges = new ArrayList<MedialAxis.Edge>();
 		}
 
-		public void add(VD disk) {
+		void add(VD disk) {
+			if (innerDisks.size() == 0) {
+				edges.add(new Edge(root, disk));
+			} else {
+				edges.add(new Edge(innerDisks.get(innerDisks.size() - 1), disk));
+			}
 			innerDisks.add(disk);
-//			length++;
+		}
+
+		/**
+		 * Add the last (leaf) disk for the segment
+		 * 
+		 * @param disk
+		 */
+		void end(VD disk) {
+			leaf = disk;
+			if (innerDisks.isEmpty()) { // bifurcations that link directly to other bifucations
+				edges.add(new Edge(root, disk));
+			} else {
+				edges.add(new Edge(innerDisks.get(innerDisks.size() - 1), disk));
+			}
+			Coordinate[] coords = new Coordinate[innerDisks.size() + 2];
+			coords[0] = root.position;
+			for (int i = 1; i < innerDisks.size(); i++) {
+				coords[i] = innerDisks.get(i - 1).position;
+			}
+			coords[coords.length - 1] = leaf.position;
+			lineString = GEOM_FACTORY.createLineString(coords);
+		}
+
+		void smooth(int smoothingType) {
+			// TODO
 		}
 	}
 
