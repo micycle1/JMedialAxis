@@ -1,5 +1,5 @@
 # JMedialAxis
-Medial Axes for JTS Geometry
+Medial Axes (2D skeletons) for JTS Geometry
 
 ## Overview
 
@@ -8,7 +8,6 @@ Medial Axes for JTS Geometry
 The library models the medial axis of a given geometry as a (rooted) tree of medial disks. The result is a medial axis that can be traversed recursively by starting at the largest
 disk and following the child nodes until they reach the boundary of the geometry.
 
-Medial disks reference a parent and have up to 3 children (disks with more than one child represent bifurcation of the axis). The root of the tree is the disk whose underlying triangle has the largest circumcircle; this is also the single disk that trifurcates.
 
 The library is geared towards medial axis visualisation & animation and enables easy and powerful navigation of medial axes.
 
@@ -17,16 +16,21 @@ by Roger C. Tam.
 
 ## Features
 
-* JTS Geometry as input
+* JTS geometry as input
 * For a given medial disk, easy access to its:
   * Descendants
   * Ancestors
-  * Belonging segment
+  * Belonging branch
   * Parent disk
-  * Children disks
-* Branch/Segment pruning, via:
+  * Child disk(s)
+* Branch pruning, via:
   * Feature area pruning
 * Supports geometries with holes (genus > 0)
+* Output as:
+  * List of edges
+  * List of segments
+  * Dissolved (simplified) JTS geometry
+  * JTS LineMergeGraph
 
 ## Showcase
 ...
