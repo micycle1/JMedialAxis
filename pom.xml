@@ -6,6 +6,12 @@
 	<artifactId>MedialAxis</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 
+	<properties>
+		<sonar.projectKey>micycle1_JMedialAxis</sonar.projectKey>
+		<sonar.organization>micycle</sonar.organization>
+		<sonar.host.url>https://sonarcloud.io</sonar.host.url>
+	</properties>
+
 	<build>
 		<plugins>
 			<plugin>
@@ -17,6 +23,30 @@
 					<target>8</target>
 					<encoding>UTF-8</encoding>
 				</configuration>
+			</plugin>
+			<plugin>
+				<artifactId>maven-source-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
+						<phase>deploy</phase>
+						<goals>
+							<goal>jar-no-fork</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<phase>deploy</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
@@ -32,7 +62,7 @@
 		<dependency>
 			<groupId>org.locationtech.jts</groupId>
 			<artifactId>jts-core</artifactId>
-			<version>1.18.0</version>
+			<version>1.18.1</version>
 		</dependency>
 		<dependency>
 			<groupId>com.github.gwlucastrig</groupId>
@@ -43,6 +73,7 @@
 			<groupId>org.processing</groupId>
 			<artifactId>core</artifactId>
 			<version>3.3.7</version>
+			<scope>provided</scope> <!-- don't include processing in maven build -->
 		</dependency>
 		<dependency>
 			<groupId>org.tinspin</groupId>

@@ -75,6 +75,7 @@ public class MedialAxis {
 	private final ArrayList<MedialDisk> voronoiDisks = new ArrayList<>();
 	public MedialDisk rootNode; // the medial axis has a trifuraction at the root
 	MedialDisk deepestNode;
+	public MedialDisk furthestNode; // node that is furthest spatial distance away from root
 	private List<MedialDisk> leaves;
 	private List<MedialDisk> bifurcations; // birfurcating/forking nodes
 	private List<Branch> branches;
@@ -147,11 +148,17 @@ public class MedialAxis {
 
 		int depth = 1; // number of edges in the path from the root to the node
 		int id = 1; // breadth-first ID
+		double highestDistance = 0;
 
 		while (!stack.isEmpty()) {
 
 			MedialDisk live = stack.pop(); // FIFO (BFS)
 			voronoiDisks.add(live);
+			
+			if (live.distance > highestDistance) {
+				highestDistance = live.distance;
+				furthestNode = live;
+			}
 
 			// get half-edge duals (edge shared with other triangles)
 			final SimpleTriangle n1 = tc.map.get(live.t.getEdgeA().getDual());
@@ -164,6 +171,7 @@ public class MedialAxis {
 				live.addchild(child);
 				remaining.remove(n1);
 				edges.add(new Edge(live, child));
+				child.distance = live.distance + distance(live.position, child.position);
 			}
 			if (remaining.contains(n2)) {
 				MedialDisk child = new MedialDisk(live, id++, n2, tc.cccMap.get(n2), depth);
@@ -171,6 +179,7 @@ public class MedialAxis {
 				live.addchild(child);
 				remaining.remove(n2);
 				edges.add(new Edge(live, child));
+				child.distance = live.distance + distance(live.position, child.position);
 			}
 			if (remaining.contains(n3)) {
 				MedialDisk child = new MedialDisk(live, id++, n3, tc.cccMap.get(n3), depth);
@@ -178,6 +187,7 @@ public class MedialAxis {
 				live.addchild(child);
 				remaining.remove(n3);
 				edges.add(new Edge(live, child));
+				child.distance = live.distance + distance(live.position, child.position);
 			}
 
 			depth++;
@@ -668,7 +678,7 @@ public class MedialAxis {
 		 * This disk's children nodes. Nodes have upto 3 children. Leaf nodes have 0
 		 * children.
 		 */
-		ArrayList<MedialDisk> children;
+		public List<MedialDisk> children;
 		public final int depthBF; // breadth-first depth from the root node, better for drawing. // TODO
 		public int depthDF; // distance from the root, length of the path from n to the root TODO
 
@@ -679,6 +689,9 @@ public class MedialAxis {
 		double area;
 		/** The sum of triangle areas of this disk and all its descendants */
 		public double featureArea;
+
+		/** euclidean shortest path distance from root node circumcircle */
+		public double distance = 0; // TODO
 
 		MedialDisk branchParent; // TODO
 
@@ -695,6 +708,7 @@ public class MedialAxis {
 		 */
 		final double axialGradient; // axial gradient between this and its parent. (rChild-rParent/d)
 
+		/** Centerpoint of this disk */
 		public final Coordinate position;
 		/** The radius of the circumcircle of the disk's underlying triangle */
 		public final double radius;
