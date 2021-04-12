@@ -1,3 +1,5 @@
+[![](https://jitpack.io/v/micycle1/JMedialAxis.svg)](https://jitpack.io/#micycle1/JMedialAxis)
+
 # JMedialAxis
 Medial Axes (2D skeletons) for JTS Geometry
 
@@ -11,7 +13,7 @@ disk and following the child nodes until they reach the boundary of the geometry
 
 The library is geared towards medial axis visualisation & animation and enables easy and powerful navigation of medial axes.
 
-The implementation uses ideas introduced in *Voronoi Ball Models for Computational Shape Applications*
+The implementation uses ideas presented in *Voronoi Ball Models for Computational Shape Applications*
 by Roger C. Tam.
 
 ## Features

@@ -2,6 +2,7 @@ package micycle.medialAxis;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -79,9 +80,12 @@ public class MedialAxis {
 	private List<MedialDisk> leaves;
 	private List<MedialDisk> bifurcations; // birfurcating/forking nodes
 	private List<Branch> branches;
-	private final List<Edge> edges;
+	private final HashMap<MedialDisk, Edge> edges; // a map of edge-tail -> edge for easier access in pruning methods
 
 	public boolean debug = false;
+
+	private double minimumAxialGradient = Double.MAX_VALUE; // most negative axial gradient value.
+	private double maximumAxialGradient = -Double.MAX_VALUE; // most positive axial gradient value.
 
 //	public ArrayList<ArrayList<VD>> branches = new ArrayList<>(); // node sections between forks
 
@@ -114,7 +118,7 @@ public class MedialAxis {
 		if (debug) {
 			System.out.println("Input coordinates #: " + g.getCoordinates().length);
 		}
-		if (g.getCoordinates().length > 2000) {
+		if (g.getCoordinates().length > 4000) {
 			Polygon poly = (Polygon) g;
 			if (poly.getNumInteriorRing() > 0) {
 				g = TopologyPreservingSimplifier.simplify(g, 1);
@@ -144,7 +148,7 @@ public class MedialAxis {
 		remaining.addAll(tc.triangles);
 		remaining.remove(tc.largestDiskTriangle);
 
-		edges = new ArrayList<Edge>();
+		edges = new HashMap<>();
 
 		int depth = 1; // number of edges in the path from the root to the node
 		int id = 1; // breadth-first ID
@@ -154,7 +158,7 @@ public class MedialAxis {
 
 			MedialDisk live = stack.pop(); // FIFO (BFS)
 			voronoiDisks.add(live);
-			
+
 			if (live.distance > highestDistance) {
 				highestDistance = live.distance;
 				furthestNode = live;
@@ -170,7 +174,7 @@ public class MedialAxis {
 				stack.add(child);
 				live.addchild(child);
 				remaining.remove(n1);
-				edges.add(new Edge(live, child));
+				edges.put(child, new Edge(live, child));
 				child.distance = live.distance + distance(live.position, child.position);
 			}
 			if (remaining.contains(n2)) {
@@ -178,7 +182,7 @@ public class MedialAxis {
 				stack.add(child);
 				live.addchild(child);
 				remaining.remove(n2);
-				edges.add(new Edge(live, child));
+				edges.put(child, new Edge(live, child));
 				child.distance = live.distance + distance(live.position, child.position);
 			}
 			if (remaining.contains(n3)) {
@@ -186,8 +190,9 @@ public class MedialAxis {
 				stack.add(child);
 				live.addchild(child);
 				remaining.remove(n3);
-				edges.add(new Edge(live, child));
+				edges.put(child, new Edge(live, child));
 				child.distance = live.distance + distance(live.position, child.position);
+				// TODO add in feature area here?
 			}
 
 			depth++;
@@ -207,6 +212,7 @@ public class MedialAxis {
 
 	public MedialDisk nearestDisk(double x, double y) {
 		// TODO use PhTree/Quadtree?
+		// TODO use triangulation instead (and remove tinspin dependency)?
 		if (kdTree == null) { // Lazy initialisation
 			kdTree = KDTree.create(2);
 			voronoiDisks.forEach(disk -> kdTree.insert(new double[] { disk.position.x, disk.position.y }, disk));
@@ -294,7 +300,7 @@ public class MedialAxis {
 	public Geometry getDissolvedGeometry() {
 		if (dissolved == null) { // Lazy initialisation
 			LineDissolver ld = new LineDissolver();
-			edges.forEach(e -> {
+			getEdges().forEach(e -> {
 				ld.add(e.lineString);
 			});
 			dissolved = ld.getResult();
@@ -334,7 +340,8 @@ public class MedialAxis {
 	}
 
 	/**
-	 * Nodes/VDs with two descendent lineages (two children)
+	 * Nodes/medial disks with two descendent lineages (two children disks). Note
+	 * the root node (a trifurcating node) is not included in the output.
 	 * 
 	 * @return
 	 */
@@ -350,8 +357,8 @@ public class MedialAxis {
 	 * @return list of edges (in breadth-first order from the root node) connecting
 	 *         medial disks.
 	 */
-	public List<Edge> getEdges() {
-		return edges;
+	public Collection<Edge> getEdges() {
+		return edges.values();
 	}
 
 	/**
@@ -381,6 +388,78 @@ public class MedialAxis {
 			}
 		}
 		return this.branches;
+	}
+
+	/**
+	 * Returns a subset of the axis' edges; in this method edges are pruned by their
+	 * axial gradient value. Edges with negative axial gradient values indicate a
+	 * narrowing of the shape along that edge, and are more likely to be noise. The
+	 * threshold takes into account this shape's minimum and maximum axial values
+	 * when filtering.
+	 * <p>
+	 * Presently this method prunes based on global min and max axial values (rather
+	 * than per branch).
+	 * 
+	 * @param threshold between 0...1, where 0 is no pruning and 1 is maximal
+	 *                  pruning. the shape may be fully pruned before threshold = 1
+	 * @return
+	 */
+	public List<Edge> getPrunedEdges(double threshold) {
+		threshold = Math.min(1, Math.max(0, threshold)); // constrain 0...1
+		final double mappedThreshold = minimumAxialGradient
+				+ (maximumAxialGradient - minimumAxialGradient) * (threshold);
+
+		final ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		stack.add(rootNode);
+
+		final ArrayList<Edge> out = new ArrayList<>();
+
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop();
+			live.children.forEach(child -> {
+				if (child.axialGradient >= mappedThreshold) {
+					stack.add(child);
+					out.add(edges.get(child));
+				}
+			});
+		}
+		return out;
+	}
+
+	/**
+	 * Returns a subset of the axis' edges; in this method edges are pruned by their
+	 * axial gradient value and axis distance from the root node.
+	 * 
+	 * @param axialThreshold    between 0...1, where 0 is no pruning and 1 is
+	 *                          maximal pruning
+	 * @param distanceThreshold between 0...1, where 0 is no pruning and 1 is
+	 *                          maximal pruning
+	 * @return
+	 */
+	public List<Edge> getPrunedEdges(double axialThreshold, double distanceThreshold) {
+		axialThreshold = Math.min(1, Math.max(0, axialThreshold)); // constrain 0...1
+		axialThreshold = axialThreshold * axialThreshold * axialThreshold; // make 0...1 more linear
+		final double mappedAxial = minimumAxialGradient
+				+ (maximumAxialGradient - minimumAxialGradient) * axialThreshold;
+
+		distanceThreshold = 1 - Math.min(1, Math.max(0, distanceThreshold)); // constrain 0...1
+		final double mappedDistance = furthestNode.distance * distanceThreshold;
+
+		final ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		stack.add(rootNode);
+
+		final ArrayList<Edge> out = new ArrayList<>();
+
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop();
+			live.children.forEach(child -> {
+				if (child.axialGradient >= mappedAxial && child.distance <= mappedDistance) {
+					stack.add(child);
+					out.add(edges.get(child));
+				}
+			});
+		}
+		return out;
 	}
 
 	/**
@@ -467,7 +546,7 @@ public class MedialAxis {
 		}
 	}
 
-	private void calcFeatureArea() {
+	public void calcFeatureArea() {
 		if (rootNode.area == rootNode.featureArea) { // lazy compute
 			recurseFeatureArea(rootNode);
 		}
@@ -668,7 +747,7 @@ public class MedialAxis {
 	 * @author MCarleton
 	 *
 	 */
-	public static class MedialDisk {
+	public class MedialDisk {
 
 		/** The underlying delaunay triangle associated with this disk */
 		public SimpleTriangle t;
@@ -693,8 +772,6 @@ public class MedialAxis {
 		/** euclidean shortest path distance from root node circumcircle */
 		public double distance = 0; // TODO
 
-		MedialDisk branchParent; // TODO
-
 //		"branch"/"path" b // branch is the set of VDs between two nodes of degree > 1, or between a node of degree >1 and a leaf
 		// branch should point to start and end
 
@@ -702,11 +779,12 @@ public class MedialAxis {
 		boolean forkParent = false; // (is child a node of degree >1?)
 
 		/**
-		 * Measures the change in the width of the shape per unit length of the axis.If
-		 * positive, this part of the object widens as we progress along the axis
-		 * branch; if it’s negative the part narrows
+		 * Measures the change in the width of the shape per unit length of the axis
+		 * (edge segment). When positive, this part of the object widens as we progress
+		 * along the axis branch; if it’s negative the part narrows. The gradient for a
+		 * given disk is measured using its parent node (rather than child).
 		 */
-		final double axialGradient; // axial gradient between this and its parent. (rChild-rParent/d)
+		public final double axialGradient; // axial gradient between this and its parent. (rChild-rParent/d)
 
 		/** Centerpoint of this disk */
 		public final Coordinate position;
@@ -727,7 +805,9 @@ public class MedialAxis {
 			radius = circumcircle[2];
 			if (parent != null) {
 				axialGradient = (radius - parent.radius) / distance(position, parent.position);
-			} else {
+				minimumAxialGradient = Math.min(minimumAxialGradient, axialGradient);
+				maximumAxialGradient = Math.max(maximumAxialGradient, axialGradient);
+			} else { // root node
 				axialGradient = 0;
 			}
 		}
@@ -749,12 +829,21 @@ public class MedialAxis {
 			// or cantour pairing, or (int) double.tolongbits
 			return t.getEdgeA().hashCode(); // unique for a given tin
 		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj instanceof MedialDisk) {
+				MedialDisk other = (MedialDisk) obj;
+				return other.t.equals(t);
+			}
+			return false;
+		}
 	}
 
 	/**
 	 * An edge models a link between two disks.
 	 */
-	public static class Edge {
+	public class Edge {
 
 		public final MedialDisk head;
 		public final MedialDisk tail;
@@ -762,12 +851,28 @@ public class MedialAxis {
 		public final double axialGradient;
 		public final LineString lineString;
 
-		public Edge(MedialDisk head, MedialDisk tail) {
+		Edge(MedialDisk head, MedialDisk tail) {
 			this.head = head;
 			this.tail = tail;
 			lineString = GEOM_FACTORY.createLineString(new Coordinate[] { head.position, tail.position });
 			depth = head.depthBF;
 			axialGradient = tail.axialGradient;
+		}
+
+		/**
+		 * Hashcode for this edge.
+		 */
+		@Override
+		public int hashCode() {
+			return head.t.getEdgeA().hashCode() * (int) (tail.position.y + 1); // TODO check
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (obj instanceof Edge) {
+				return hashCode() == ((Edge) obj).hashCode();
+			}
+			return false;
 		}
 	}
 
@@ -777,7 +882,7 @@ public class MedialAxis {
 	 * comparable based on fork degree?
 	 *
 	 */
-	public static class Branch {
+	public class Branch {
 
 		public final MedialDisk root; // root disk
 		public MedialDisk leaf; // leaf disk
@@ -846,22 +951,22 @@ public class MedialAxis {
 	 * @return double[3] of [x, y, radius]
 	 */
 	private static double[] circumcircle(Vertex a, Vertex b, Vertex c) {
-	
+
 		double D = (a.getX() - c.getX()) * (b.getY() - c.getY()) - (b.getX() - c.getX()) * (a.getY() - c.getY());
 		double px = (((a.getX() - c.getX()) * (a.getX() + c.getX()) + (a.getY() - c.getY()) * (a.getY() + c.getY())) / 2
 				* (b.getY() - c.getY())
 				- ((b.getX() - c.getX()) * (b.getX() + c.getX()) + (b.getY() - c.getY()) * (b.getY() + c.getY())) / 2
 						* (a.getY() - c.getY()))
 				/ D;
-	
+
 		double py = (((b.getX() - c.getX()) * (b.getX() + c.getX()) + (b.getY() - c.getY()) * (b.getY() + c.getY())) / 2
 				* (a.getX() - c.getX())
 				- ((a.getX() - c.getX()) * (a.getX() + c.getX()) + (a.getY() - c.getY()) * (a.getY() + c.getY())) / 2
 						* (b.getX() - c.getX()))
 				/ D;
-	
+
 		double rs = (c.getX() - px) * (c.getX() - px) + (c.getY() - py) * (c.getY() - py);
-	
+
 		return new double[] { px, py, Math.sqrt(rs) };
 	}
 
