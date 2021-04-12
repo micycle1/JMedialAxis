@@ -64,6 +64,9 @@ import processing.core.PConstants;
  */
 public class MedialAxis {
 
+	// TODO see https://www.youtube.com/watch?v=WiU0foXVSsM
+	// also see https://lgg.epfl.ch/publications/2009/scale_axis_transform_2009.pdf
+
 	private static final GeometryFactory GEOM_FACTORY = new GeometryFactory(
 			new PrecisionModel(PrecisionModel.FLOATING_SINGLE));
 
@@ -463,6 +466,57 @@ public class MedialAxis {
 	}
 
 	/**
+	 * 
+	 * @param axialThreshold
+	 * @param distanceThreshold
+	 * @param areaThreshold     between 0...1, where 0 is no pruning and 1 is
+	 *                          maximal pruning for this feature
+	 * @return
+	 */
+	public List<Edge> getPrunedEdges(double axialThreshold, double distanceThreshold, double areaThreshold) {
+		axialThreshold = Math.min(1, Math.max(0, axialThreshold)); // constrain 0...1
+		axialThreshold = axialThreshold * axialThreshold * axialThreshold; // make 0...1 more linear
+		final double mappedAxial = minimumAxialGradient
+				+ (maximumAxialGradient - minimumAxialGradient) * axialThreshold;
+
+		distanceThreshold = 1 - Math.min(1, Math.max(0, distanceThreshold)); // constrain 0...1
+		final double mappedDistance = furthestNode.distance * distanceThreshold;
+
+		calcFeatureArea();
+		areaThreshold = Math.min(1, Math.max(0, areaThreshold)); // constrain 0...1
+		areaThreshold = areaThreshold * areaThreshold * areaThreshold; // make 0...1 more linear
+		final double mappedArea = areaThreshold * rootNode.featureArea;
+
+		final ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		stack.add(rootNode);
+
+		final ArrayList<Edge> out = new ArrayList<>();
+
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop();
+			live.children.forEach(child -> {
+				if (child.axialGradient >= mappedAxial && child.distance <= mappedDistance
+						&& child.featureArea >= mappedArea) {
+					stack.add(child);
+					out.add(edges.get(child));
+				}
+			});
+		}
+		return out;
+	}
+
+	/**
+	 * Computes a random point that lies on the medial axis. Not to be confused with
+	 * getting the center point from a random medial disk.
+	 * 
+	 * @return
+	 */
+	private Coordinate getRandomPoint() {
+		// pick random edge, weighted by its length, then random point on that edge
+		return null;
+	}
+
+	/**
 	 * 90% of CPU time is here
 	 * 
 	 * @return
@@ -553,6 +607,7 @@ public class MedialAxis {
 	}
 
 	private static double recurseFeatureArea(MedialDisk node) {
+		// TODO do as part of initial build?
 		if (node.degree == 0) {
 			return node.area;
 		}
@@ -788,7 +843,11 @@ public class MedialAxis {
 
 		/** Centerpoint of this disk */
 		public final Coordinate position;
-		/** The radius of the circumcircle of the disk's underlying triangle */
+		/**
+		 * The radius of the circumcircle of the disk's underlying triangle. Also
+		 * equivalent to the distance between the disk center and the closest point on
+		 * the shape
+		 */
 		public final double radius;
 
 		final int id; // BFS id from root node, unique for each disk (unlike depthDF)
