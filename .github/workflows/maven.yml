@@ -19,7 +19,7 @@ jobs:
           java-version: 11
           
       - name: Build docs with Maven
-      - run: mvn javadoc:javadoc
+        run: mvn javadoc:javadoc
       
       - name: publish javadoc
         uses: JamesIves/github-pages-deploy-action@4.1.1
