@@ -5,13 +5,12 @@ Medial Axes (2D skeletons) for JTS Geometry
 
 ## Overview
 
-*JMedialAxis* produces medial axis **trees** from [JTS](https://en.wikipedia.org/wiki/JTS_Topology_Suite) geometries or collections of coordinates (as opposed to binary 2D images).
+*JMedialAxis* produces medial axis **trees** from [JTS](https://en.wikipedia.org/wiki/JTS_Topology_Suite) geometries or collections of coordinates (as opposed to binary 2D images). A.k.a medial axis transform: the input shape can be approximate reconstruction of the original shape.
 
-The library models the medial axis of a given geometry as a (rooted) tree of medial disks. The result is a medial axis that can be traversed recursively by starting at the largest
-disk and following the child nodes until they reach the boundary of the geometry.
+The library models the medial axis of a given geometry as a (rooted) tree of medial disks (sometimes called *Voronoi Balls*). The result is a medial axis that can be traversed recursively by starting at the largest disk and following the child nodes until they reach the boundary of the geometry.
 
 
-The library is geared towards medial axis visualisation & animation and enables easy and powerful navigation of medial axes.
+The library is geared towards medial axis visualisation & animation and enables easy and powerful navigation of medial axes, and getting edges, disks and branches.
 
 The implementation uses ideas presented in *Voronoi Ball Models for Computational Shape Applications*
 by Roger C. Tam.

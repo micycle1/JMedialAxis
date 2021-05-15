@@ -296,7 +296,11 @@ public class MedialAxis {
 	/**
 	 * Returns a JTS geometry where medial axis edges are dissolved into a set of
 	 * maximal-length Linestrings. The output can be further simplfied with
-	 * DouglasPeuckerSimplifier for example.
+	 * DouglasPeuckerSimplifier for example. * Returns a simplified medial axis
+	 * graph leaving only maximal-length lines in which every unique segment appears
+	 * once only. The output lines run between node vertices of the input, which are
+	 * vertices which have either degree 1, or degree 3 or greater.
+	 * 
 	 * 
 	 * @return
 	 */
