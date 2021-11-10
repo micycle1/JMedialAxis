@@ -85,7 +85,7 @@ public class MedialAxis {
 	private List<Branch> branches;
 	private final HashMap<MedialDisk, Edge> edges; // a map of edge-tail -> edge for easier access in pruning methods
 
-	public boolean debug = false;
+	public boolean debug = true;
 
 	private double minimumAxialGradient = Double.MAX_VALUE; // most negative axial gradient value.
 	private double maximumAxialGradient = -Double.MAX_VALUE; // most positive axial gradient value.
@@ -801,9 +801,12 @@ public class MedialAxis {
 	 * 
 	 * <p>
 	 * A voronoi disk represents each node in the medial axis and has a
-	 * corresponding triangle in the underlying Delaunay triangulation.
+	 * corresponding triangle in the underlying Delaunay triangulation. A disk is
+	 * the shape's maximal-inscribed circle located at the disk's center point -- a
+	 * disk's radius is the distance to the nearest point on the shape edge from the
+	 * disk center point.
 	 * 
-	 * @author MCarleton
+	 * @author Michael Carleton
 	 *
 	 */
 	public class MedialDisk {
@@ -841,7 +844,9 @@ public class MedialAxis {
 		 * Measures the change in the width of the shape per unit length of the axis
 		 * (edge segment). When positive, this part of the object widens as we progress
 		 * along the axis branch; if it’s negative the part narrows. The gradient for a
-		 * given disk is measured using its parent node (rather than child).
+		 * given disk is measured using its parent node (i.e. how the gradient changes
+		 * as we move towards this disk), rather than child (how gradient changes as we
+		 * move away from this disk).
 		 */
 		public final double axialGradient; // axial gradient between this and its parent. (rChild-rParent/d)
 
@@ -904,7 +909,7 @@ public class MedialAxis {
 	}
 
 	/**
-	 * An edge models a link between two disks.
+	 * Edges are straight-line segments that connect two adjacent disks.
 	 */
 	public class Edge {
 
@@ -940,7 +945,8 @@ public class MedialAxis {
 	}
 
 	/**
-	 * branch/trunk branch
+	 * Branches are series of successive disks found in between. Branches terminate
+	 * when a disk is a leaf, or when a disk bifurcates. branch/trunk branch
 	 * 
 	 * comparable based on fork degree?
 	 *
@@ -954,6 +960,7 @@ public class MedialAxis {
 		 * branch's root.
 		 */
 		public List<MedialDisk> innerDisks;
+		/** most branches have one sibling; 3 branches have 2 siblings (trifurcating origin) */
 		Branch sibling; // branch that shares parent disk
 		// contains bezier interpolation
 		int forkDegree; // how many forks are visited from the rootnode to the root of this branch
@@ -1005,6 +1012,9 @@ public class MedialAxis {
 			// TODO
 		}
 
+		/**
+		 * Whether this branch terminates at a leaf node.
+		 */
 		public boolean terminates() {
 			return root.isLeaf();
 		}
