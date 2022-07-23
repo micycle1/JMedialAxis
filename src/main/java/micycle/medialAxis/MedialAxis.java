@@ -6,9 +6,12 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.algorithm.locate.IndexedPointInAreaLocator;
 import org.locationtech.jts.densify.Densifier;
 import org.locationtech.jts.dissolve.LineDissolver;
@@ -16,19 +19,25 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.Location;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.PrecisionModel;
 import org.locationtech.jts.operation.linemerge.LineMergeGraph;
 import org.locationtech.jts.simplify.DouglasPeuckerSimplifier;
 import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
+import org.tinfour.common.IConstraint;
+import org.tinfour.common.IIncrementalTin;
 import org.tinfour.common.IQuadEdge;
+import org.tinfour.common.PolygonConstraint;
 import org.tinfour.common.SimpleTriangle;
 import org.tinfour.common.Vertex;
 import org.tinfour.standard.IncrementalTin;
+import org.tinfour.utils.HilbertSort;
 import org.tinfour.utils.TriangleCollector;
 import org.tinspin.index.kdtree.KDTree;
 
+import micycle.medialAxis.Utility.LinearRingIterator;
 import processing.core.PApplet;
 import processing.core.PConstants;
 
@@ -45,6 +54,8 @@ import processing.core.PConstants;
  * axis bifurcates/forks at disks with 2 children). The root is the disk with
  * the largest circumcirle, also the single disk that trifurcates. All disks
  * have an indegree of 1.
+ * <p>
+ * Medial axes are...
  * <p>
  * For geometries of genus zero, the graph is naturally a tree. For objects with
  * holes, we break each cycle by imposing an appropriate breakpoint in the loop.
@@ -66,9 +77,15 @@ public class MedialAxis {
 
 	// TODO see https://www.youtube.com/watch?v=WiU0foXVSsM
 	// also see https://lgg.epfl.ch/publications/2009/scale_axis_transform_2009.pdf
+	
+	// TODO convert disks into undirected graph (e.g. to find the distance from the furthest node to every other node).
+	// to enable traversal up and down the direction (And find loop connected loops) 
+	
+	/*
+	 * or have a map of bifurcations
+	 */
 
-	private static final GeometryFactory GEOM_FACTORY = new GeometryFactory(
-			new PrecisionModel(PrecisionModel.FLOATING_SINGLE));
+	private static final GeometryFactory GEOM_FACTORY = new GeometryFactory(new PrecisionModel(PrecisionModel.FLOATING_SINGLE));
 
 	private Geometry g;
 	private KDTree<MedialDisk> kdTree;
@@ -77,7 +94,7 @@ public class MedialAxis {
 	private LineMergeGraph lineMergeGraph;
 
 	private final ArrayList<MedialDisk> voronoiDisks = new ArrayList<>();
-	public MedialDisk rootNode; // the medial axis has a trifuraction at the root
+	private MedialDisk rootNode; // the medial axis has a trifuraction at the root
 	MedialDisk deepestNode;
 	public MedialDisk furthestNode; // node that is furthest spatial distance away from root
 	private List<MedialDisk> leaves;
@@ -85,7 +102,7 @@ public class MedialAxis {
 	private List<Branch> branches;
 	private final HashMap<MedialDisk, Edge> edges; // a map of edge-tail -> edge for easier access in pruning methods
 
-	public boolean debug = true;
+	public static boolean debug = false;
 
 	private double minimumAxialGradient = Double.MAX_VALUE; // most negative axial gradient value.
 	private double maximumAxialGradient = -Double.MAX_VALUE; // most positive axial gradient value.
@@ -101,13 +118,13 @@ public class MedialAxis {
 //		this(GEOM_FACTORY.createLinearRing(coordinates));
 //	}
 
-	private final IndexedPointInAreaLocator pointLocator;
+	private IndexedPointInAreaLocator pointLocator;
 
 	/**
 	 * The medial axis is computed for the geometry during construction.
 	 * 
 	 * @param g Geometry whose medial axis to compute. Can contain holes. Must not
-	 *          be a multigeometry
+	 *          be a multigeometry. Must be fairly dense.
 	 */
 	public MedialAxis(Geometry g) {
 //		if (!g.isSimple()) {
@@ -115,26 +132,31 @@ public class MedialAxis {
 //			return;
 //		}
 
-		/**
+		/*
 		 * Simplify if complex
 		 */
 		if (debug) {
 			System.out.println("Input coordinates #: " + g.getCoordinates().length);
 		}
-		if (g.getCoordinates().length > 4000) {
-			Polygon poly = (Polygon) g;
-			if (poly.getNumInteriorRing() > 0) {
-				g = TopologyPreservingSimplifier.simplify(g, 1);
-			} else {
-				g = DouglasPeuckerSimplifier.simplify(g, 1);
-			}
-			if (debug) {
-				System.out.println("Simplifying shape. New coordinates #: " + g.getCoordinates().length);
-			}
-		}
+//		pointLocator = new IndexedPointInAreaLocator(g); // ideally before densification
+//		if (g.getCoordinates().length > 4000) {
+//			Polygon poly = (Polygon) g;
+//			if (poly.getNumInteriorRing() > 0) {
+//				g = TopologyPreservingSimplifier.simplify(g, 1);
+//			} else {
+//				g = DouglasPeuckerSimplifier.simplify(g, 1);
+//			}
+//			if (debug) {
+//				System.out.println("Simplifying shape. New coordinates #: " + g.getCoordinates().length);
+//			}
+//		}
 
-		pointLocator = new IndexedPointInAreaLocator(g);
-		this.g = Densifier.densify(g, 10); // NOTE constant=10
+		this.g = g;
+		/*
+		 * ideally would have adaptive densification that densifies more concave/narrow
+		 * parts more
+		 */
+//		this.g = Densifier.densify(g, 10); // NOTE constant=10
 		if (debug) {
 			System.out.println("Densified coordinates #" + this.g.getCoordinates().length);
 		}
@@ -144,16 +166,16 @@ public class MedialAxis {
 
 		// having done triangulation, build up directed tree of medial axis
 		rootNode = new MedialDisk(null, 0, tc.largestDiskTriangle, tc.largestCircumcircle, 0);
-		ArrayDeque<MedialDisk> stack = new ArrayDeque<>(15);
+		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
 		stack.push(rootNode); // start tree with rootnode
 
-		HashSet<SimpleTriangle> remaining = new HashSet<>(); // use bit set?
+		HashSet<SimpleTriangle> remaining = new HashSet<>(tc.triangles.size()); // use bit set?
 		remaining.addAll(tc.triangles);
 		remaining.remove(tc.largestDiskTriangle);
 
 		edges = new HashMap<>();
 
-		int depth = 1; // number of edges in the path from the root to the node
+		int depth = 1; // number of edges in the path from the root to the node // BF ID?
 		int id = 1; // breadth-first ID
 		double highestDistance = 0;
 
@@ -213,9 +235,19 @@ public class MedialAxis {
 		return voronoiDisks;
 	}
 
+	/**
+	 * Returns the root disk -- the disk with largest radius and 3 children.
+	 * 
+	 * @return
+	 */
+	public MedialDisk getRoot() {
+		return rootNode;
+	}
+
 	public MedialDisk nearestDisk(double x, double y) {
 		// TODO use PhTree/Quadtree?
 		// TODO use triangulation instead (and remove tinspin dependency)?
+		// TODO shuffle before insertion?
 		if (kdTree == null) { // Lazy initialisation
 			kdTree = KDTree.create(2);
 			voronoiDisks.forEach(disk -> kdTree.insert(new double[] { disk.position.x, disk.position.y }, disk));
@@ -333,6 +365,10 @@ public class MedialAxis {
 		}
 		return lineMergeGraph;
 	}
+	
+	private void asGraph() {
+//		convert to ?cyclical? jGrapt graph // TOD// then org.jgrapht.alg.cycle.CycleDetector
+	}
 
 	/**
 	 * End nodes / A VDs of degree 1/no children
@@ -343,7 +379,24 @@ public class MedialAxis {
 		if (leaves == null) { // Lazy initialisation
 			leaves = voronoiDisks.stream().filter(vd -> vd.degree == 0).collect(Collectors.toList());
 		}
-		return leaves;
+		return leaves; // TODO IMMUTABLE ARRAY, SORTED BY DISK DISTANCE/FEATUREAREA highest first
+	}
+
+	public MedialDisk getDeepestDisk() {
+//		getLeaves().sort((a, b) -> Double.compare(b.id, a.id));
+//		return leaves.get(0); // TODO copy array first
+		return deepestNode;
+	}
+	
+	public MedialDisk getFurthestDisk() {
+//		getLeaves().sort((a, b) -> Double.compare(b.id, a.id));
+//		return leaves.get(0); // TODO copy array first
+		return furthestNode;
+	}
+
+	private MedialDisk getDeepestBFDisk() {
+		getLeaves().sort((a, b) -> Double.compare(b.depthBF, a.depthBF));
+		return leaves.get(0); // TODO copy array first
 	}
 
 	/**
@@ -366,6 +419,14 @@ public class MedialAxis {
 	 */
 	public Collection<Edge> getEdges() {
 		return edges.values();
+	}
+	
+	/**
+	 * 
+	 * @return a map of edge-tail -> edge for easier access in pruning methods
+	 */
+	public Map<MedialDisk, Edge> getEdgeMap() {
+		return edges;
 	}
 
 	/**
@@ -413,8 +474,7 @@ public class MedialAxis {
 	 */
 	public List<Edge> getPrunedEdges(double threshold) {
 		threshold = Math.min(1, Math.max(0, threshold)); // constrain 0...1
-		final double mappedThreshold = minimumAxialGradient
-				+ (maximumAxialGradient - minimumAxialGradient) * (threshold);
+		final double mappedThreshold = minimumAxialGradient + (maximumAxialGradient - minimumAxialGradient) * (threshold);
 
 		final ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
 		stack.add(rootNode);
@@ -446,8 +506,7 @@ public class MedialAxis {
 	public List<Edge> getPrunedEdges(double axialThreshold, double distanceThreshold) {
 		axialThreshold = Math.min(1, Math.max(0, axialThreshold)); // constrain 0...1
 		axialThreshold = axialThreshold * axialThreshold * axialThreshold; // make 0...1 more linear
-		final double mappedAxial = minimumAxialGradient
-				+ (maximumAxialGradient - minimumAxialGradient) * axialThreshold;
+		final double mappedAxial = minimumAxialGradient + (maximumAxialGradient - minimumAxialGradient) * axialThreshold;
 
 		distanceThreshold = 1 - Math.min(1, Math.max(0, distanceThreshold)); // constrain 0...1
 		final double mappedDistance = furthestNode.distance * distanceThreshold;
@@ -480,8 +539,7 @@ public class MedialAxis {
 	public List<Edge> getPrunedEdges(double axialThreshold, double distanceThreshold, double areaThreshold) {
 		axialThreshold = Math.min(1, Math.max(0, axialThreshold)); // constrain 0...1
 		axialThreshold = axialThreshold * axialThreshold * axialThreshold; // make 0...1 more linear
-		final double mappedAxial = minimumAxialGradient
-				+ (maximumAxialGradient - minimumAxialGradient) * axialThreshold;
+		final double mappedAxial = minimumAxialGradient + (maximumAxialGradient - minimumAxialGradient) * axialThreshold;
 
 		distanceThreshold = 1 - Math.min(1, Math.max(0, distanceThreshold)); // constrain 0...1
 		final double mappedDistance = furthestNode.distance * distanceThreshold;
@@ -499,14 +557,74 @@ public class MedialAxis {
 		while (!stack.isEmpty()) {
 			MedialDisk live = stack.pop();
 			live.children.forEach(child -> {
-				if (child.axialGradient >= mappedAxial && child.distance <= mappedDistance
-						&& child.featureArea >= mappedArea) {
+				if (child.axialGradient >= mappedAxial && child.distance <= mappedDistance && child.featureArea >= mappedArea) {
 					stack.add(child);
 					out.add(edges.get(child));
 				}
 			});
 		}
 		return out;
+	}
+
+	/**
+	 * Will call consumer with the next disk in a BF manner, starting at the root
+	 * node.
+	 * 
+	 * @param consumer
+	 */
+	public void iteratorBF(Consumer<MedialDisk> consumer) { // accept starting node as parameter
+		// TODO consumer integer arg, corresponding to recursion depth (Same for all children) (or user can reference depthBF int?)
+		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		stack.add(rootNode);
+
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop(); // pop first of queue
+			consumer.accept(live);
+			live.children.forEach(stack::add); // insert at end of queue
+		}
+	}
+
+	public void iteratorDF(Consumer<MedialDisk> consumer) { // accept enum to determine DF via area, distance, bf id, etc
+		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		stack.add(rootNode);
+		calcFeatureArea();
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop(); // pop first of queue
+			consumer.accept(live);
+			live.children.sort((a,b) -> Double.compare(a.distance, b.distance)); // NOTE EXAMPLE
+			live.children.forEach(stack::push); // insert at start of queue
+		}
+	}
+	
+	public void iteratorBfUp(Consumer<MedialDisk> consumer) {
+		// start at leaves, add parent, cleanup leaves, continue
+		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		Set<MedialDisk> seen = new HashSet<>(getDisks().size());
+		getLeaves().forEach(stack::add); // sort leaves by farthest?
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop(); // pop first of queue
+			consumer.accept(live);
+			if (live.parent != null && seen.add(live.parent)) {
+				stack.add(live.parent); // insert at end of queue
+			}
+		}
+	}
+	
+	public void iteratorDfUp(Consumer<MedialDisk> consumer) {
+		// start at leaf, add parents until either root node, or next bifurcating node
+		// when stack not empty, stop when parent has been seen, and pop next leaf.
+		Set<MedialDisk> seen = new HashSet<>(getDisks().size());
+		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
+		getLeaves().sort((a,b) -> Double.compare(a.distance, b.distance) ); // NOTE
+		getLeaves().forEach(stack::push);
+			while (!stack.isEmpty()) {
+				MedialDisk live = stack.pop(); // pop first of queue
+				consumer.accept(live);
+				if (live.parent != null && seen.add(live.parent)) {
+					stack.push(live.parent); // insert at start of queue
+				}
+			}
+		
 	}
 
 	/**
@@ -535,12 +653,45 @@ public class MedialAxis {
 		for (int i = 0; i < coords.length - 1; i++) {
 			vertices.add(new Vertex(coords[i].x, coords[i].y, 0));
 		}
+		HilbertSort hs = new HilbertSort();
+		hs.sort(vertices);
 		tin.add(vertices, null); // insert point set; points are triangulated upon insertion
+		computeConstraints(tin);
 
 		TC tc = new TC(tin);
 		TriangleCollector.visitSimpleTriangles(tin, tc);
-
 		return tc;
+	}
+
+	private void computeConstraints(IIncrementalTin tin) {
+		List<IConstraint> constraints = new ArrayList<>();
+		for (int n = 0; n < g.getNumGeometries(); n++) {
+			boolean hole = false;
+
+			LinearRingIterator lri = new LinearRingIterator(g.getGeometryN(n));
+			for (LinearRing ring : lri) {
+				ArrayList<Vertex> points = new ArrayList<>();
+				Coordinate[] c = ring.getCoordinates();
+				if (c.length == 0) {
+					continue;
+				}
+				if (Orientation.isCCW(c) && !hole) {
+					for (int i = 0; i < c.length; i++) {
+						points.add(new Vertex(c[i].x, c[i].y, 0));
+					}
+				} else {
+					// holes are CW; region to keep lies to left the of constraints
+					for (int i = c.length - 1; i >= 0; i--) {
+						points.add(new Vertex(c[i].x, c[i].y, 0));
+					}
+				}
+				constraints.add(new PolygonConstraint(points));
+				hole = true; // all rings except the first are holes
+			}
+		}
+		if (!constraints.isEmpty()) {
+			tin.addConstraints(constraints, false); // true/false is negligible?
+		}
 	}
 
 	private void calculateDepthFirstIndices() {
@@ -599,7 +750,7 @@ public class MedialAxis {
 				}
 
 			}
-			nodes = new ArrayList<MedialDisk>(nextLeaves);
+			nodes = new ArrayList<>(nextLeaves);
 			nextLeaves.clear();
 		}
 	}
@@ -609,7 +760,7 @@ public class MedialAxis {
 			recurseFeatureArea(rootNode);
 		}
 	}
-
+	
 	private static double recurseFeatureArea(MedialDisk node) {
 		// TODO do as part of initial build?
 		if (node.degree == 0) {
@@ -620,13 +771,10 @@ public class MedialAxis {
 		}
 		return node.featureArea;
 	}
-
+	
 	public void drawVDM(PApplet p) {
-
 		// looks different when drawing with DFS vs BFS
-
-		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
-		stack.push(rootNode);
+		p.pushStyle();
 		p.strokeWeight(5);
 		p.colorMode(PConstants.HSB, 1, 1, 1, 1);
 
@@ -634,17 +782,13 @@ public class MedialAxis {
 
 		final float depth = deepestNode.depthBF;
 
-		while (!stack.isEmpty()) {
-			MedialDisk live = stack.pop();
-
+		iteratorBF(live -> {
 			live.children.forEach(child -> {
 				p.stroke((live.depthBF / depth) * .8f, 1, 1, 0.8f);
-				p.line((float) live.position.x, (float) live.position.y, (float) child.position.x,
-						(float) child.position.y);
-				stack.push(child);
+				p.line((float) live.position.x, (float) live.position.y, (float) child.position.x, (float) child.position.y);
 			});
-		}
-		p.colorMode(PConstants.RGB, 255, 255, 255, 255);
+		});
+		p.popStyle();
 	}
 
 	/**
@@ -684,8 +828,7 @@ public class MedialAxis {
 			if (live.depthBF < maxDepth) {
 				live.children.forEach(child -> {
 					p.stroke(live.depthBF / depth, 1, 1, 0.8f);
-					p.line((float) live.position.x, (float) live.position.y, (float) child.position.x,
-							(float) child.position.y);
+					p.line((float) live.position.x, (float) live.position.y, (float) child.position.x, (float) child.position.y);
 					stack.push(child); // DFS
 				});
 			}
@@ -737,8 +880,7 @@ public class MedialAxis {
 			live.children.forEach(child -> {
 				if (child.featureArea > areaLimit) {
 					p.stroke(live.depthBF / depth, 1, 1, 0.8f);
-					p.line((float) live.position.x, (float) live.position.y, (float) child.position.x,
-							(float) child.position.y);
+					p.line((float) live.position.x, (float) live.position.y, (float) child.position.x, (float) child.position.y);
 					stack.push(child); // DFS
 				}
 			});
@@ -775,7 +917,9 @@ public class MedialAxis {
 			 * axis
 			 */
 
-			if (pointLocator.locate(center) == Location.INTERIOR) {
+//			if (pointLocator.locate(center) == Location.INTERIOR) {
+			IConstraint constraint = t.getContainingRegion();
+			if (constraint != null && constraint.definesConstrainedRegion()) {
 				// TODO use rasterised PShape?
 
 				coords.add(center);
@@ -859,7 +1003,7 @@ public class MedialAxis {
 		 */
 		public final double radius;
 
-		final int id; // BFS id from root node, unique for each disk (unlike depthDF)
+		public final int id; // BFS id from root node, unique for each disk (unlike depthDF)
 
 		MedialDisk(MedialDisk parent, int id, SimpleTriangle t, double[] circumcircle, int depthBF) {
 			this.parent = parent;
@@ -889,7 +1033,7 @@ public class MedialAxis {
 		}
 
 		boolean isLeaf() {
-			return children.size() == 0;
+			return degree == 0;
 		}
 
 		@Override
@@ -960,7 +1104,10 @@ public class MedialAxis {
 		 * branch's root.
 		 */
 		public List<MedialDisk> innerDisks;
-		/** most branches have one sibling; 3 branches have 2 siblings (trifurcating origin) */
+		/**
+		 * most branches have one sibling; 3 branches have 2 siblings (trifurcating
+		 * origin)
+		 */
 		Branch sibling; // branch that shares parent disk
 		// contains bezier interpolation
 		int forkDegree; // how many forks are visited from the rootnode to the root of this branch
@@ -975,11 +1122,11 @@ public class MedialAxis {
 		Branch(MedialDisk root) {
 			this.root = root;
 			innerDisks = new ArrayList<>();
-			edges = new ArrayList<MedialAxis.Edge>();
+			edges = new ArrayList<>();
 		}
 
 		void add(MedialDisk disk) {
-			if (innerDisks.size() == 0) {
+			if (innerDisks.isEmpty()) {
 				edges.add(new Edge(root, disk));
 			} else {
 				edges.add(new Edge(innerDisks.get(innerDisks.size() - 1), disk));

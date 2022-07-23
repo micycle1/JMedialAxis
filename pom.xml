@@ -62,28 +62,24 @@
 		<dependency>
 			<groupId>org.locationtech.jts</groupId>
 			<artifactId>jts-core</artifactId>
-			<version>1.18.1</version>
+			<version>1.19.0</version>
 		</dependency>
 		<dependency>
-			<groupId>com.github.gwlucastrig</groupId>
-			<artifactId>Tinfour</artifactId>
-			<version>-SNAPSHOT</version>
+			<groupId>org.tinfour</groupId>
+			<artifactId>TinfourCore</artifactId>
+			<version>2.1.7</version>
+			<scope>provided</scope> <!-- don't package into uber jar -->
 		</dependency>
 		<dependency>
-			<groupId>org.processing</groupId>
-			<artifactId>core</artifactId>
-			<version>3.3.7</version>
-			<scope>provided</scope> <!-- don't include processing in maven build -->
+			<groupId>com.github.micycle1</groupId>
+			<artifactId>processing3</artifactId>
+			<version>3.5.4</version>
+			<scope>provided</scope> <!-- don't package into uber jar -->
 		</dependency>
 		<dependency>
 			<groupId>org.tinspin</groupId>
 			<artifactId>tinspin-indexes</artifactId>
 			<version>1.7.1</version>
-		</dependency>
-		<dependency>
-			<groupId>org.orbisgis</groupId>
-			<artifactId>poly2tri-core</artifactId>
-			<version>0.1.2</version>
 		</dependency>
 
 	</dependencies>
