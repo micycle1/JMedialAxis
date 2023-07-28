@@ -13,19 +13,14 @@ import java.util.stream.Collectors;
 
 import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.algorithm.locate.IndexedPointInAreaLocator;
-import org.locationtech.jts.densify.Densifier;
 import org.locationtech.jts.dissolve.LineDissolver;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.LinearRing;
-import org.locationtech.jts.geom.Location;
-import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.PrecisionModel;
 import org.locationtech.jts.operation.linemerge.LineMergeGraph;
-import org.locationtech.jts.simplify.DouglasPeuckerSimplifier;
-import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
 import org.tinfour.common.IConstraint;
 import org.tinfour.common.IIncrementalTin;
 import org.tinfour.common.IQuadEdge;
@@ -77,10 +72,11 @@ public class MedialAxis {
 
 	// TODO see https://www.youtube.com/watch?v=WiU0foXVSsM
 	// also see https://lgg.epfl.ch/publications/2009/scale_axis_transform_2009.pdf
-	
-	// TODO convert disks into undirected graph (e.g. to find the distance from the furthest node to every other node).
-	// to enable traversal up and down the direction (And find loop connected loops) 
-	
+
+	// TODO convert disks into undirected graph (e.g. to find the distance from the
+	// furthest node to every other node).
+	// to enable traversal up and down the direction (And find loop connected loops)
+
 	/*
 	 * or have a map of bifurcations
 	 */
@@ -100,6 +96,9 @@ public class MedialAxis {
 	private List<MedialDisk> leaves;
 	private List<MedialDisk> bifurcations; // birfurcating/forking nodes
 	private List<Branch> branches;
+	/**
+	 * Gives a mapping for the edge 'parent->e' for a given edge e.
+	 */
 	private final HashMap<MedialDisk, Edge> edges; // a map of edge-tail -> edge for easier access in pruning methods
 
 	public static boolean debug = false;
@@ -365,8 +364,9 @@ public class MedialAxis {
 		}
 		return lineMergeGraph;
 	}
-	
+
 	private void asGraph() {
+		// directed jGraphT graph
 //		convert to ?cyclical? jGrapt graph // TOD// then org.jgrapht.alg.cycle.CycleDetector
 	}
 
@@ -387,7 +387,7 @@ public class MedialAxis {
 //		return leaves.get(0); // TODO copy array first
 		return deepestNode;
 	}
-	
+
 	public MedialDisk getFurthestDisk() {
 //		getLeaves().sort((a, b) -> Double.compare(b.id, a.id));
 //		return leaves.get(0); // TODO copy array first
@@ -420,13 +420,24 @@ public class MedialAxis {
 	public Collection<Edge> getEdges() {
 		return edges.values();
 	}
-	
+
 	/**
 	 * 
 	 * @return a map of edge-tail -> edge for easier access in pruning methods
 	 */
 	public Map<MedialDisk, Edge> getEdgeMap() {
 		return edges;
+	}
+
+	/**
+	 * Returns the edges comprising the path from the given disk to the root of the
+	 * medial axis.
+	 * 
+	 * @param d
+	 * @return
+	 */
+	public List<Edge> getEdgesToRoot(MedialDisk d) {
+		return getAncestors(d).stream().map(a -> edges.get(a)).collect(Collectors.toList());
 	}
 
 	/**
@@ -573,7 +584,8 @@ public class MedialAxis {
 	 * @param consumer
 	 */
 	public void iteratorBF(Consumer<MedialDisk> consumer) { // accept starting node as parameter
-		// TODO consumer integer arg, corresponding to recursion depth (Same for all children) (or user can reference depthBF int?)
+		// TODO consumer integer arg, corresponding to recursion depth (Same for all
+		// children) (or user can reference depthBF int?)
 		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
 		stack.add(rootNode);
 
@@ -591,11 +603,11 @@ public class MedialAxis {
 		while (!stack.isEmpty()) {
 			MedialDisk live = stack.pop(); // pop first of queue
 			consumer.accept(live);
-			live.children.sort((a,b) -> Double.compare(a.distance, b.distance)); // NOTE EXAMPLE
+			live.children.sort((a, b) -> Double.compare(a.distance, b.distance)); // NOTE EXAMPLE
 			live.children.forEach(stack::push); // insert at start of queue
 		}
 	}
-	
+
 	public void iteratorBfUp(Consumer<MedialDisk> consumer) {
 		// start at leaves, add parent, cleanup leaves, continue
 		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
@@ -609,22 +621,53 @@ public class MedialAxis {
 			}
 		}
 	}
-	
+
 	public void iteratorDfUp(Consumer<MedialDisk> consumer) {
 		// start at leaf, add parents until either root node, or next bifurcating node
 		// when stack not empty, stop when parent has been seen, and pop next leaf.
 		Set<MedialDisk> seen = new HashSet<>(getDisks().size());
 		ArrayDeque<MedialDisk> stack = new ArrayDeque<>();
-		getLeaves().sort((a,b) -> Double.compare(a.distance, b.distance) ); // NOTE
+		getLeaves().sort((a, b) -> Double.compare(a.distance, b.distance)); // NOTE
 		getLeaves().forEach(stack::push);
-			while (!stack.isEmpty()) {
-				MedialDisk live = stack.pop(); // pop first of queue
-				consumer.accept(live);
-				if (live.parent != null && seen.add(live.parent)) {
-					stack.push(live.parent); // insert at start of queue
-				}
+		while (!stack.isEmpty()) {
+			MedialDisk live = stack.pop(); // pop first of queue
+			consumer.accept(live);
+			if (live.parent != null && seen.add(live.parent)) {
+				stack.push(live.parent); // insert at start of queue
 			}
-		
+		}
+
+	}
+
+	/**
+	 * Is disk A a parent of disk B?
+	 * 
+	 * @param a
+	 * @param b
+	 * @return
+	 */
+	private boolean isParentOf(MedialDisk a, MedialDisk b) {
+		return false; // TODO
+	}
+
+	private boolean isChildOf(MedialDisk a, MedialDisk b) {
+		return false; // TODO
+	}
+
+	private boolean isRelated(MedialDisk a, MedialDisk b) {
+		return false; // TODO
+	}
+
+	private void longestPath() {
+		/*-
+		 * TODO
+		 * find the two disks that make up the longest path of the medial axis.
+		 * the path must pass through the root node.
+		 * To compute, find non-related (i.e. not child/parent) disk pairs and sum their distance values. 
+		 * 		Pair with largest value denotes longest path.
+		 * Group the disks into 3 groups, depending on which of the three root branches they belong to,
+		 * 		then use pairs from distinct groups. 
+		 */
 	}
 
 	/**
@@ -760,7 +803,7 @@ public class MedialAxis {
 			recurseFeatureArea(rootNode);
 		}
 	}
-	
+
 	private static double recurseFeatureArea(MedialDisk node) {
 		// TODO do as part of initial build?
 		if (node.degree == 0) {
@@ -771,7 +814,7 @@ public class MedialAxis {
 		}
 		return node.featureArea;
 	}
-	
+
 	public void drawVDM(PApplet p) {
 		// looks different when drawing with DFS vs BFS
 		p.pushStyle();
@@ -1004,6 +1047,16 @@ public class MedialAxis {
 		public final double radius;
 
 		public final int id; // BFS id from root node, unique for each disk (unlike depthDF)
+
+		private int bifurcationDepth; // TODO, determines how many bifurcations ("hops") are between this disk and the
+										// root
+
+		/**
+		 * the "kink" angle (0...PI) this disk makes with its parent and child node (if
+		 * it has only one child). if the node has 0 or more than 1 child, this value is
+		 * NaN
+		 */
+		private double angle = Double.NaN; // TODO initially unknown until axis is completed.
 
 		MedialDisk(MedialDisk parent, int id, SimpleTriangle t, double[] circumcircle, int depthBF) {
 			this.parent = parent;
